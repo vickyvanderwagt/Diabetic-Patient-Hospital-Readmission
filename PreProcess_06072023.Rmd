@@ -1,0 +1,161 @@
+---
+title: "ADS503_Final_Diabetes | Team 4"
+author: "Jeffrey Joyner, S M Sultan Mahmud Rahat, Vicky van der Wagt, UE Wang"
+date: "6/7/2023"
+output: 
+  html_document:
+    theme: cosmo
+    highlight: tango
+    toc: true
+    toc_float: true
+    fig_width: 4.5
+    fig_height: 3
+---
+### Diabetes Hospital Readmission
+#### The objective of this analysis is to predict whether diabetic patients will be readmitted into the hospital within 30 days, within a period longer than 30 days, or not at all, at least not on record. 
+
+
+### Data PreProcessing
+
+#### Import all required packages & libraries
+```{r setup, include=FALSE}
+#specfying to hide warnings and messages in output
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
+
+library(caret)
+library(Hmisc)
+library(dplyr)
+```
+
+#### Import dataset
+Speicying that *na.strings = ?*. While there were no intial null values, upon further examination it was observed that the researchers used "?" to indicate missing values. Specifying the "?" as null for downstream analysis.
+```{r}
+df <- read.csv("diabetic_data.csv",
+               na.strings = "?",
+               strip.white = TRUE)
+#head(df)
+dim(df)
+```
+Dataset has 101,766 rows and 50 columns.
+
+
+#### Examine the unique values in each column
+```{r}
+#describe(df)
+```
+There are 2 columns, citoglipvon and examide, that only have one unique value. Many columns also have a very high proportion of observations in one category, and a low number in the other. However,these are all categorical and binary.  
+
+#### Create table to view index position and name of each column
+This ensures that these features are treated as categorical during analysis.
+```{r}
+column_table <- data.frame(
+  Index = 1:ncol(df),
+  Column_Name = colnames(df)
+)
+```
+Used the output of column_table to reference which column indexes need to be converted to factors in the next chunk.
+
+#### Convert categorical data into factors
+```{r}
+#column_table
+to_factor <- c(3:9,11,12, 19:21, 23:50)
+df[,to_factor] <- lapply(df[,to_factor] , factor)
+
+#Ensure resepective columns have changed to factor datatype
+#str(df) 
+```
+
+##### Check for total null values, and null values by column
+```{r}
+sum(is.na(df))
+
+#create table containing column names with # of missing variables, sorted in decscending order
+na <- colSums(is.na(df)) %>% as.data.frame() 
+na <- cbind(ColName = rownames(na), na)
+colnames(na)[2] = "NumNA"
+na_sort <- na[order(-na$NumNA),c(1,2)]
+
+#attach column containing percentage of missing values
+na_sort$PercNA <- round((na_sort$NumNA/(nrow(df))*100),2)
+na_sort_cols <- subset(na_sort, select = c(ColName, NumNA, PercNA))
+
+head(na_sort_cols, 10)
+```
+There are initially 192,849 null values in this data set. When examining individual columns and associated missing values, it becomes apparent that all the missing values come from 7 columns. These columns and the relative percentage of datapoints missing are weight(96.86%), medical_specialty (49.08%), payer_code (39.56%), race(2.23%), diag_3(1.40%), diag_2(.35%), and diag_1(.02%).
+
+#### Assess all the missing columns
+
+* weight: since so much of the data is missing and there are no other columns that can be used to impute weight, we will remove this column.
+* medical_specialty: TBD based on EDA
+* payer_code: TBD based on EDA
+* race: just leave as "Unknown"?
+* diag_3, diag_2, and diag_1: these are all categorical. they stand for the primary diagnosis, which could be important in analysis.  TBD based on EDA
+
+```{r}
+df <- subset(df, select = -c(weight))
+```
+
+#### Ensure there are no duplicate encounters listed in the dataset
+Encounter_id is the unique identifier of each encounter, so we don't want duplicates. Although patient number is also an identifier, it is acceptable to have duplicates of these, as the observations are individual visits, not patients. 
+```{r}
+encounter_occ <- data.frame(table(df$encounter_id))
+encounter_occ[encounter_occ$Freq > 1,]
+```
+There are no duplicate encounters in the diabetes dataset, so no rows need to be removed. 
+
+#### Removing unique identifiers
+The unique identifiers, encounter_id and patient number have no useful information to modeling. Duplicate patient visits are already captured by "num inpatient visits," so it is redundant. 
+```{r}
+df <- subset(df, select = -c(encounter_id, patient_nbr))
+```
+
+#### Subset continuous columns
+```{r}
+cont_cols <- sapply(df,is.numeric) #subsetting continuous columns
+describe(cont_cols)
+```
+There are 8 continuous columns. 
+
+#### Check for degenerate columns 
+Only checking for continuous variables, as these are the columns we will scale; we want to ensure that scaling these will not induce any NAs.
+```{r}
+degeneratecols <- nearZeroVar(cont_cols)
+degeneratecols
+```
+There are no degenerate columns.
+
+#### Scale continuous predictors
+Only scaling numeric columns, as the categrical variables(stored as factors) don't have numerical meaning/magnitude.
+```{r}
+cont_index <- which(cont_cols)
+scaled_data <- preProcess(df[, cont_index], method = c("center", "scale"))
+scaled_df <- predict(scaled_data, df[, cont_index])
+#replacing the continuous features with their scaled values in the original df
+df[, cont_index] <- scaled_df
+```
+
+#### Split into training and testing
+Since we have a large dataset, we will allocate 80% to training and 20% to testing/validation.
+```{r}
+trainingRows <- createDataPartition(df$readmitted, p = .8, list=FALSE)
+
+#sub-setting predictors and outcome (X and y)
+X <- subset(df,select = -readmitted)
+y <- subset(df,select = readmitted)
+
+train_x <- X[trainingRows, ]
+train_y <- y[trainingRows, ]
+test_x <- X[-trainingRows, ]
+test_y <- y[-trainingRows,]
+```
+
+
+
+
+### Exploratory Data Analysis (EDA)
+
+
+
+### Modeling
+
+
