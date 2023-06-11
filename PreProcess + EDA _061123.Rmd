@@ -1,0 +1,356 @@
+---
+title: "EDA"
+output: html_document
+---
+---
+title: "ADS503_Final_Diabetes | Team 4"
+author: "Jeffrey Joyner, S M Sultan Mahmud Rahat, Vicky van der Wagt, UE Wang"
+date: "6/7/2023"
+output: 
+  html_document:
+    theme: cosmo
+    highlight: tango
+    toc: true
+    toc_float: true
+    fig_width: 4.5
+    fig_height: 3
+---
+### Diabetes Hospital Readmission
+#### The objective of this analysis is to predict whether diabetic patients will be readmitted into the hospital within 30 days, within a period longer than 30 days, or not at all, at least not on record. 
+
+
+### Data PreProcessing
+
+#### Import all required packages & libraries
+```{r setup, include=FALSE}
+#specfying to hide warnings and messages in output
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
+
+library(caret)
+library(Hmisc)
+library(dplyr)
+```
+
+#### Import dataset
+Speicying that *na.strings = ?*. While there were no intial null values, upon further examination it was observed that the researchers used "?" to indicate missing values. Specifying the "?" as null for downstream analysis.
+```{r}
+df <- read.csv("diabetic_data.csv",
+               na.strings = "?",
+               strip.white = TRUE)
+#head(df)
+dim(df)
+```
+Dataset has 101,766 rows and 50 columns.
+
+
+#### Examine the unique values in each column
+```{r}
+#describe(df)
+```
+There are 2 columns, citoglipvon and examide, that only have one unique value. Many columns also have a very high proportion of observations in one category, and a low number in the other. However,these are all categorical and binary.  
+
+#### Create table to view index position and name of each column
+This ensures that these features are treated as categorical during analysis.
+```{r}
+column_table <- data.frame(
+  Index = 1:ncol(df),
+  Column_Name = colnames(df)
+)
+```
+Used the output of column_table to reference which column indexes need to be converted to factors in the next chunk.
+
+#### Convert categorical data into factors
+```{r}
+#column_table
+to_factor <- c(3:9,11,12, 19:21, 23:50)
+df[,to_factor] <- lapply(df[,to_factor] , factor)
+
+#Ensure resepective columns have changed to factor datatype
+str(df) 
+```
+
+##### Check for total null values, and null values by column
+```{r}
+sum(is.na(df))
+
+#create table containing column names with # of missing variables, sorted in decscending order
+na <- colSums(is.na(df)) %>% as.data.frame() 
+na <- cbind(ColName = rownames(na), na)
+colnames(na)[2] = "NumNA"
+na_sort <- na[order(-na$NumNA),c(1,2)]
+
+#attach column containing percentage of missing values
+na_sort$PercNA <- round((na_sort$NumNA/(nrow(df))*100),2)
+na_sort_cols <- subset(na_sort, select = c(ColName, NumNA, PercNA))
+
+head(na_sort_cols, 10)
+```
+There are initially 192,849 null values in this data set. When examining individual columns and associated missing values, it becomes apparent that all the missing values come from 7 columns. These columns and the relative percentage of datapoints missing are weight(96.86%), medical_specialty (49.08%), payer_code (39.56%), race(2.23%), diag_3(1.40%), diag_2(.35%), and diag_1(.02%).
+
+#### Assess all the missing columns
+
+* weight: since so much of the data is missing and there are no other columns that can be used to impute weight, we will remove this column.
+* medical_specialty: TBD based on EDA
+* payer_code: TBD based on EDA
+* race: just leave as "Unknown"?
+* diag_3, diag_2, and diag_1: these are all categorical. they stand for the primary diagnosis, which could be important in analysis.  TBD based on EDA
+
+```{r}
+df <- subset(df, select = -c(weight))
+```
+
+#### Ensure there are no duplicate encounters listed in the dataset
+Encounter_id is the unique identifier of each encounter, so we don't want duplicates. Although patient number is also an identifier, it is acceptable to have duplicates of these, as the observations are individual visits, not patients. 
+```{r}
+encounter_occ <- data.frame(table(df$encounter_id))
+encounter_occ[encounter_occ$Freq > 1,]
+```
+There are no duplicate encounters in the diabetes dataset, so no rows need to be removed. 
+
+#### Removing unique identifiers
+The unique identifiers, encounter_id and patient number have no useful information to modeling. Duplicate patient visits are already captured by "num inpatient visits," so it is redundant. 
+```{r}
+df <- subset(df, select = -c(encounter_id, patient_nbr))
+```
+
+#### Subset continuous columns
+```{r}
+cont_cols <- sapply(df,is.numeric) #subsetting continuous columns
+describe(cont_cols)
+```
+There are 8 continuous columns. 
+
+#### Check for degenerate columns 
+Only checking for continuous variables, as these are the columns we will scale; we want to ensure that scaling these will not induce any NAs.
+```{r}
+degeneratecols <- nearZeroVar(cont_cols)
+degeneratecols
+```
+There are no degenerate columns.
+
+#### Scale continuous predictors
+Only scaling numeric columns, as the categrical variables(stored as factors) don't have numerical meaning/magnitude.
+```{r}
+cont_index <- which(cont_cols)
+scaled_data <- preProcess(df[, cont_index], method = c("center", "scale"))
+scaled_df <- predict(scaled_data, df[, cont_index])
+#replacing the continuous features with their scaled values in the original df
+df[, cont_index] <- scaled_df
+```
+
+#### Split into training and testing
+Since we have a large dataset, we will allocate 80% to training and 20% to testing/validation.
+```{r}
+trainingRows <- createDataPartition(df$readmitted, p = .8, list=FALSE)
+
+#sub-setting predictors and outcome (X and y)
+X <- subset(df,select = -readmitted)
+y <- subset(df,select = readmitted)
+
+train_x <- X[trainingRows, ]
+train_y <- y[trainingRows, ]
+test_x <- X[-trainingRows, ]
+test_y <- y[-trainingRows,]
+```
+
+### Exploratory Data Analysis (EDA)
+
+```{r}
+library(ggplot2)
+# Create a count plot
+ggplot(df, aes(x = readmitted)) + geom_bar() +
+  labs(title = "Distribution of Readmission") +
+  geom_text(
+            aes(label = paste0(round((..count..)/sum(..count..) * 100, 1), "%")),
+            stat = "count", vjust = -0.5, size = 3)
+```
+
+To convert the target variable into a binary variable, we convert the not readmitted and > 30 readmitted into 0, and readmitted within 30 days as 1, to better analyze our data.
+
+```{r}
+# Convert 'NO' and '>30' to 0, and '<30' to 1
+df$readmitted <- ifelse(df$readmitted == 'NO' | df$readmitted == '>30', 0, 1)
+table(df$readmitted)
+```
+
+```{r}
+# replot the bar plot
+ggplot(df, aes(x = readmitted)) + geom_bar() +
+  labs(title = "Distribution of Readmission") +
+  geom_text(
+            aes(label = paste0(round((..count..)/sum(..count..) * 100, 1), "%")),
+            stat = "count", vjust = -0.5, size = 3)
+```
+
+```{r}
+# Create a stacked bar plot with 'payer_code' and 'readmitted' distribution
+ggplot(df, aes(x = payer_code, fill = factor(readmitted))) + geom_bar() +
+  labs(title = "Distribution of payer_code with Readmission") +
+  scale_fill_manual(values = c("0" = "lightblue", "1" = "lightgreen"),
+                    labels = c("0" = "No", "1" = "Readmitted")) +
+  geom_text(
+    aes(label = paste0(round((..count..)/sum(..count..) * 100, 1), "%")),
+    stat = "count", position = position_stack(vjust = 0.5), size = 3 )
+```
+
+After plotting the distribution of 'payer_code' with the readmission status, it was observed that approximately 40% of the 'payer_code' values were missing. Furthermore, the 'payer_code' does not appear to be significant impacted on whether a patient is readmitted or not.
+
+medical_specialty
+
+```{r}
+# Create a bar plot with the sorted and filtered data
+ggplot(df, aes(x = medical_specialty, fill = factor(readmitted))) + geom_bar() +
+  labs(title = "Distribution of medical_specialty with Readmission") +
+  scale_fill_manual(values = c("0" = "lightblue", "1" = "lightgreen"),
+                    labels = c("0" = "No", "1" = "Readmitted")) +
+  geom_text(
+    aes(label = paste0(round((..count..)/sum(..count..) * 100, 1), "%")),
+    stat = "count", position = position_stack(vjust = 0.5), size = 3) +  coord_flip()
+```
+
+After plotting the distribution of 'medical_specialty' with the readmission status, it was observed that approximately 50% of the 'medical_specialty' values were missing. Furthermore, the 'medical_specialty' does not appear to be significant impacted on whether a patient is readmitted or not. 
+
+admission_type_id
+
+```{r}
+# Create a stacked bar plot with 'admission_type_id' and 'readmitted' distribution
+ggplot(df, aes(x = admission_type_id, fill = factor(readmitted))) + geom_bar() +
+  labs(title = "Distribution of admission_type_id with Readmission") +
+  scale_fill_manual(values = c("0" = "lightblue", "1" = "lightgreen"),
+                    labels = c("0" = "No", "1" = "Readmitted")) +
+  geom_text(
+    aes(label = paste0(round((..count..)/sum(..count..) * 100, 1), "%")),
+    stat = "count", position = position_stack(vjust = 0.5), size = 3 )
+```
+
+There are 53.1% of patients in the emergency admission type, and 18.2% are classified as urgent admission types. 18.5% are labeled as elective admission types. "Not Available" and "Null" each have 4.7% and 5.2% of the total adjustment type. Patients readmission rates in emergency admission types are higher than in other admission types.
+
+admission_source_id
+
+```{r}
+# Create a stacked bar plot with 'admission_source_id' and 'readmitted' distribution
+ggplot(df, aes(x = admission_source_id, fill = factor(readmitted))) + geom_bar() +
+  labs(title = "Distribution of admission_source_id with Readmission") +
+  scale_fill_manual(values = c("0" = "lightblue", "1" = "lightgreen"),
+                    labels = c("0" = "No", "1" = "Readmitted")) +
+  geom_text(
+    aes(label = paste0(round((..count..)/sum(..count..) * 100, 1), "%")),
+    stat = "count", position = position_stack(vjust = 0.5), size = 3 )
+```
+
+We can tell from the above plot that 56.5% of patients are from the emergency room, 29.1% are from physician referrals, and 6.7% are transferred from another health agency. 3.1% are transferred from the HMO rederral, and 2.2% are transferred from another health care facility. Patients from emergency room admission sources have a higher rate of readmission than patients from other sources.
+
+discharge_disposition_id
+
+```{r}
+# Create a stacked bar plot with 'discharge_disposition_id' and 'readmitted' distribution
+ggplot(df, aes(x = discharge_disposition_id, fill = factor(readmitted))) + geom_bar() +
+  labs(title = "Distribution of discharge_disposition_id with Readmission") +
+  scale_fill_manual(values = c("0" = "lightblue", "1" = "lightgreen"),
+                    labels = c("0" = "No", "1" = "Readmitted")) +
+  geom_text(
+    aes(label = paste0(round((..count..)/sum(..count..) * 100, 1), "%")),
+    stat = "count", position = position_stack(vjust = 0.5), size = 3 )
+```
+
+59.2% of patients are discharged home; 13.7% are discharged or transferred to another short-term hospital; and 12.7% are discharged or transferred home with home health services. Patients who are discharged home have a 5.5% rate of being readmitted, which is higher than other discharge disposition types.
+
+age
+
+```{r}
+# Create a stacked bar plot with 'age' and 'readmitted' distribution
+ggplot(df, aes(x = age, fill = factor(readmitted))) + geom_bar() +
+  labs(title = "Distribution of age with Readmission") +
+  scale_fill_manual(values = c("0" = "lightblue", "1" = "lightgreen"),
+                    labels = c("0" = "No", "1" = "Readmitted")) +
+  geom_text(
+    aes(label = paste0(round((..count..)/sum(..count..) * 100, 1), "%")),
+    stat = "count", position = position_stack(vjust = 0.5), size = 3 )
+```
+
+25.6% of diabetic patients are aged between 70 and 80, followed by the age 60–70, which has 22.4%, and the age 80–90, which has 16.9% of the population. Age 70–80 also has the highest readmission rate of any age group.
+
+gender
+
+```{r}
+# Create a stacked bar plot with 'gender' and 'readmitted' distribution
+ggplot(df, aes(x = gender, fill = factor(readmitted))) + geom_bar() +
+  labs(title = "Distribution of gender with Readmission") +
+  scale_fill_manual(values = c("0" = "lightblue", "1" = "lightgreen"),
+                    labels = c("0" = "No", "1" = "Readmitted")) +
+  geom_text(
+    aes(label = paste0(round((..count..)/sum(..count..) * 100, 1), "%")),
+    stat = "count", position = position_stack(vjust = 0.5), size = 3 )
+```
+
+Female diabetes patients outnumber male patients by a margin of 47.7%, and their readmission rate is 6% greater than male patients'. 
+
+race
+
+```{r}
+# Create a stacked bar plot with 'race' and 'readmitted' distribution
+ggplot(df, aes(x = race, fill = factor(readmitted))) + geom_bar() +
+  labs(title = "Distribution of race with Readmission") +
+  scale_fill_manual(values = c("0" = "lightblue", "1" = "lightgreen"),
+                    labels = c("0" = "No", "1" = "Readmitted")) +
+  geom_text(
+    aes(label = paste0(round((..count..)/sum(..count..) * 100, 1), "%")),
+    stat = "count", position = position_stack(vjust = 0.5), size = 3)
+```
+
+74.7% of the deabetic patients are white, and they also have the highest readmission rate of 8.4% among all race groups.
+
+num_medications
+
+```{r}
+par(mfrow = c(2,4))
+boxplot(df$time_in_hospital, main = "time_in_hospital")
+boxplot(df$num_lab_procedures, main = "num_lab_procedures")
+boxplot(df$num_procedures, main = "num_procedures")
+boxplot(df$num_medications, main = "num_medications")
+boxplot(df$number_outpatient, main = "number_outpatient")
+boxplot(df$number_emergency, main = "number_emergency")
+boxplot(df$number_inpatient, main = "number_inpatient")
+boxplot(df$number_diagnoses, main = "number_diagnoses")
+
+```
+
+```{r}
+par(mfrow = c(1,3))
+boxplot(df$diag_1, main = "diag_1")
+boxplot(df$diag_2, main = "diag_2")
+boxplot(df$diag_3, main = "diag_3")
+```
+
+The diag_3 extra diagnostic mean value is substantially lower than the first two diagnoses, which have mean values of about 250 and 420, respectively. 
+
+```{r}
+fig <- ggplot(df, aes(x = time_in_hospital, fill = factor(readmitted))) +
+  geom_density(alpha = 0.5) +
+  scale_fill_manual(values = c("blue", "red"), labels = c("No", "Readmitted")) +
+  xlab("Time in Hospital") +
+  ylab("Frequency") +
+  ggtitle("Time in Hospital VS. Readmission") +
+  theme_minimal() +
+  theme(legend.title = element_blank())
+fig
+```
+
+```{r}
+fig <- ggplot(df, aes(x = num_procedures, fill = factor(readmitted))) +
+  geom_density(alpha = 0.5) +
+  scale_fill_manual(values = c("blue", "red"), labels = c("No", "Readmitted")) +
+  xlab("num_procedures") +
+  ylab("Frequency") +
+  ggtitle("num_procedures VS. Readmission") +
+  theme_minimal() +
+  theme(legend.title = element_blank())
+fig
+```
+
+The time in hospital and num_procedures variables show that the readmitted rate is not specifically associated with a certain number; no sign shows that the patient has a higher readmitted chance than other values.
+
+
+### Modeling
+
+
